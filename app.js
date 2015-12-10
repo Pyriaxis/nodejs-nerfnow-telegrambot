@@ -8,7 +8,7 @@ var Promise = require('bluebird');
 
 
 var bot = new TeleBot({
-    token: '<YOUR API TOKEN>',
+    token: '<API KEY>',
     sleep: 1000, // How often check updates (in ms)
     timeout: 0, // Update pulling timeout (0 - short polling)
     limit: 100, // Limits the number of updates to be retrieved
@@ -134,7 +134,9 @@ bot.on('/subscribe', function(msg) {
         }
     }
     else {
+        var index = subscribers.indexOf(chatId);
         if (index === -1) {
+
             subscribers.push(chatId);
             return bot.sendMessage(chatId, chatTitle + " has been subscribed to Nerfnow Updates!");
         } else {
