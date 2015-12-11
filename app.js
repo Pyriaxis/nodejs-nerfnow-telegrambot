@@ -5,21 +5,36 @@
 var TeleBot = require('telebot');
 var http = require('http');
 var Promise = require('bluebird');
+var winston = require('winston');
 
+var monk = require('monk');
+
+var db = monk('localhost:27017/nerfnow')
+var subscribers = db.get("subscribers");
 
 var bot = new TeleBot({
-    token: '<API KEY>',
+    token: 'APIKEYHERE',
     sleep: 1000, // How often check updates (in ms)
     timeout: 0, // Update pulling timeout (0 - short polling)
     limit: 100, // Limits the number of updates to be retrieved
 });
 
-var latest = 1704;
-var subscribers = [];
+var logger = new winston.Logger({
+    transports: [
+        new winston.transports.File({
+            filename: 'errorlog.log',
+            handleExceptions: true,
+            humanReadableUhandledException: true
+        })
+    ],
+    exitOnError: false
+});
+
+var latest = 1705;
 
 var options = {
     host: 'www.nerfnow.com',
-    path: '/comic/1704'
+    path: '/comic/1705'
 };
 
 function checkUpdate(options){
@@ -36,6 +51,7 @@ function checkUpdate(options){
             });
 
             response.on('error', function(){
+                logger.log('error', 'Check Update error');
                 console.log("oops");
                 reject(str);
             });
@@ -59,17 +75,27 @@ new CronJob('0 0 9 * * *', function() {
             latest += 1;
             var img = strUpdate.split("<div id=\"comic\">")[1].split("src=\"")[1].split("\"")[0];
 
-            for (var i = 0; i < subscribers.length; i++) {
-                bot.sendMessage(subscribers[i], "#"+ latest.toString());
-                bot.sendPhoto(subscribers[i], img);
-            }
+            var sendlist = subscribers.find({}, function(err,docs){
+                if (err){
+                    logger.log('error', err)
+                    console.log(err);
+                }
+
+                console.log(docs.length);
+                for (var count = 0; count < docs.length; count++){
+                    bot.sendMessage(docs[count].chatid, "#"+ latest);
+                    bot.sendPhoto(docs[count].chatid, img);
+                }
+            });
+
         } else
         {
+            logger.log('info', 'No new update.');
             console.log('no new update');
         }
     }).catch(function(err){
+        logger.log('err', err);
         console.log(err);
-       console.log("Promise Error");
     });
 
 },null,true,'Asia/Singapore');
@@ -99,14 +125,80 @@ function getPic(mID, number, auto){
         });
 
         response.on('error', function(){
+            logger.log("error", "getPic error.");
             console.log("oops");
         });
 
     }).end();
 }
 
+function subscribe(cid, chattitle){
+    subscribers.findOne({chatid: cid}, function(err,doc){
+        if (err) {
+            console.log(err);
+            return bot.sendMessage(cid, 'DB Error!');
+        } else if (doc === null){
+            subscribers.insert({chatid: cid},
+                function (err,doc){
+                    if (err) {
+                        console.log(err)
+                        return bot.sendMessage(cid, "Subscribe Error!")}
+                    else {
+
+                        if (chattitle === "")
+                        {
+                            return bot.sendMessage(cid, 'You have successfully subscribed to Nerfnow Updates!!');
+                        }
+                        else{
+                            return bot.sendMessage(cid, chattitle + " has been subscribed to Nerfnow Updates!");
+                        }
+                    }
+                });
+        } else {
+            if (chattitle === "") {
+                return bot.sendMessage(cid, "You are already subscribed!");
+            } else {
+                return bot.sendMessage(cid, chattitle + " is already subscribed!")
+            }
+        }
+    });
+}
+
+function unsubscribe(cid, chattitle){
+    subscribers.findOne({chatid: cid}, function(err,doc){
+        if (err) {
+            console.log(err);
+            return bot.sendMessage(cid, 'DB Error!');
+        } else if (doc !== null){
+            subscribers.remove({chatid: cid},
+                function (err,doc){
+                    if (err) {
+                        console.log(err)
+                        return bot.sendMessage(cid, "Unsubscribe Error!")}
+                    else {
+
+                        if (chattitle === "")
+                        {
+                            return bot.sendMessage(cid, 'You have successfully unsubscribed from Nerfnow Updates!!');
+                        }
+                        else{
+                            return bot.sendMessage(cid, chattitle + " has been unsubscribed from Nerfnow Updates!");
+                        }
+                    }
+                });
+        } else {
+            if (chattitle === "") {
+                return bot.sendMessage(cid, "You weren't subscribed to begin with!");
+            } else {
+                return bot.sendMessage(cid, chattitle + " wasn't subscribed to begin with!")
+            }
+        }
+    });
+}
+
+
 bot.on('/start', function(msg) {
-    console.log(msg);
+
     var id = msg.from.id;
     var mId = msg.message_id;
     var chatId = msg.chat.id;
@@ -125,23 +217,10 @@ bot.on('/subscribe', function(msg) {
     var chatId = msg.chat.id;
     var chatTitle = msg.chat.title || "";
     if (!chatTitle) {
-        var index = subscribers.indexOf(id);
-        if (index === -1) {
-            subscribers.push(id);
-            return bot.sendMessage(id, 'You have been subscribed to Nerfnow Updates!');
-        } else {
-            return bot.sendMessage(id, 'You are already subscribed!');
-        }
+        subscribe(id,"");
     }
     else {
-        var index = subscribers.indexOf(chatId);
-        if (index === -1) {
-
-            subscribers.push(chatId);
-            return bot.sendMessage(chatId, chatTitle + " has been subscribed to Nerfnow Updates!");
-        } else {
-            return bot.sendMessage(chatId, chatTitle + " is already subscribed!");
-        }
+        subscribe(chatId,chatTitle);
     }
 });
 
@@ -150,24 +229,21 @@ bot.on('/unsubscribe', function(msg) {
     var chatId = msg.chat.id;
     var chatTitle = msg.chat.title || "";
     if (!chatTitle) {
-        var index = subscribers.indexOf(id);
-        if (index !== -1) {
-            subscribers.splice(index, 1);
-            return bot.sendMessage(id, 'You have been unsubscribed from Nerfnow Updates.');
-        } else{
-            return bot.sendMessage(id, 'You weren\'t even subscribed in the first place!');
-        }
+        unsubscribe(id, "");
     }
     else {
-        var index = subscribers.indexOf(chatId);
-        if (index !== -1) {
-            subscribers.splice(index, 1);
-            return bot.sendMessage(chatId, chatTitle + " has been subscribed from Nerfnow Updates.");
-        } else{
-            return bot.sendMessage(chatId, chatTitle + ' wasn\'t even subscribed in the first place!');
-        }
+        unsubscribe(chatId, chatTitle);
     }
 });
+
+bot.on('/debug', function(msg){
+
+    console.log(msg);
+    chatId = msg.chat.id;
+    logger.log('info', msg);
+    return bot.sendMessage(chatId, "Debug: ID of chat = " + chatId.toString());
+
+})
 
 bot.on('/help', function(msg){
 
