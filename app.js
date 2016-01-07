@@ -9,11 +9,11 @@ var winston = require('winston');
 
 var monk = require('monk');
 
-var db = monk('localhost:27017/nerfnow')
+var db = monk(process.env.MONGODB_HOST + ':' + process.env.MONGODB_PORT + '/' + process.env.MONGODB_DATABASE)
 var subscribers = db.get("subscribers");
 
 var bot = new TeleBot({
-    token: 'APIKEYHERE',
+    token: 'API KEY HERE',
     sleep: 1000, // How often check updates (in ms)
     timeout: 0, // Update pulling timeout (0 - short polling)
     limit: 100, // Limits the number of updates to be retrieved
@@ -30,7 +30,7 @@ var logger = new winston.Logger({
     exitOnError: false
 });
 
-var latest = 1705;
+var latest = 1720;
 
 var options = {
     host: 'www.nerfnow.com',
@@ -264,6 +264,38 @@ bot.on('/latest', function(msg){
     var chatId = msg.chat.id;
 
     getPic(chatId, input, false);
+})
+
+bot.on('/update', function(msg){
+    options.path = '/';
+
+
+    var picurl = http.request(options,function(response) {
+        var str = '';
+        response.on('data', function (chunk) {
+            str += chunk;
+        });
+
+        response.on('end', function () {
+            try {
+                var img = str.split("<div id=\"comic\">")[1].split(".com/img/")[1].split("/")[0];
+                console.log("Latest comic number:" + img);
+                latest = parseInt(img);
+                bot.sendMessage(mID, "Updated to latest comic: #" + img );
+            } catch (e)
+            {
+                console.log(e);
+                console.log(latest);
+                if (!auto) {bot.sendMessage(mID, "Error with update... maybe host is down?");}
+            }
+        });
+
+        response.on('error', function(){
+            logger.log("error", "Request error.");
+            console.log("oops");
+        });
+
+    }).end();
 })
 
 bot.on('/grab', function(msg){
