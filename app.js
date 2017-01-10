@@ -1,47 +1,115 @@
-/**
- * Created by roger on 3/12/15.
- */
-
-var TeleBot = require('telebot');
-var http = require('http');
-var Promise = require('bluebird');
-var winston = require('winston');
+const TeleBot = require('telebot');
+const http = require('http');
+const Promise = require('bluebird');
 
 var monk = require('monk');
 
-var db = monk(process.env.MONGODB_HOST + ':' + process.env.MONGODB_PORT + '/' + process.env.MONGODB_DATABASE)
-var subscribers = db.get("subscribers");
+//const db = monk(process.env.MONGODB_HOST + ':' + process.env.MONGODB_PORT + '/' + process.env.MONGODB_DATABASE)
+const db = monk('localhost:27017/webcomicDB');
+const subscribers = db.get("subscribers");
+const comicnums = db.get("comicnums");
 
-var bot = new TeleBot({
-    token: 'API KEY HERE',
-    sleep: 1000, // How often check updates (in ms)
-    timeout: 0, // Update pulling timeout (0 - short polling)
-    limit: 100, // Limits the number of updates to be retrieved
+const bot = new TeleBot({
+    token: '165690867:AAF-6Gvt2yWe0MCm3SEJVl7pW_4iOL5_Msc',
+    pooling: { // Optional. Use pooling.
+        interval: 1000, // Optional. How often check updates (in ms).
+        timeout: 0, // Optional. Update pulling timeout (0 - short polling).
+        limit: 100, // Optional. Limits the number of updates to be retrieved.
+        retryTimeout: 5000 // Optional. Reconnecting timeout (in ms).
+    }
 });
 
-var logger = new winston.Logger({
-    transports: [
-        new winston.transports.File({
-            filename: 'errorlog.log',
-            handleExceptions: true,
-            humanReadableUhandledException: true
-        })
-    ],
-    exitOnError: false
-});
-
-var latest = 1720;
-
-var options = {
-    host: 'www.nerfnow.com',
-    path: '/comic/1705'
+var repos = {
+    nerfnow:{
+        host: 'www.nerfnow.com',
+        subpath: '/comic/',
+        latestpath: '',
+        id: ''
+    },
+    cnh:{
+        host: 'explosm.net',
+        subpath: '/comics/',
+        latestpath: '/comics/latest',
+        id: ''
+    }
 };
 
-function checkUpdate(options){
+//init db numbers if not
+for (var key in repos) {
+    initDBNumbers(key);
+}
+
+function initDBNumbers(key){
+    if (repos.hasOwnProperty(key)) {
+        comicnums.findOne({name: key}).then((doc) =>{
+            console.log(doc);
+            if (doc){
+                repos[key].id = doc.id;
+            } else {
+                comicnums.insert({name: key, id: 1});
+            }
+        })
+    }
+}
+
+var CronJob = require('cron').CronJob;
+
+new CronJob('0 0 9 * * *', function() {
+    console.log("Cron Update Fired!");
+
+    for (var key in repos) {
+        if (repos.hasOwnProperty(key)) {
+            var update = fetchImg({host: repos[key].host, path: repos[key].subpath + (repos[key].id +1).toString(), key: key})
+            if (update)
+            {
+                comicnums.findOneAndUpdate({name: key}, {$set: {id: repos[key].id + 1}});
+                repos[key].id++;
+                subscribers.find({key: key}, (err,docs)=> {
+                    for (var i = 0; i < docs.subscribers.length; i++){
+                        bot.sendMessage(docs.subscribers[i], '#' + repos[key].id);
+                        bot.sendPhoto(docs.subscribers[i], update);
+                    }
+                })
+            } else {
+                console.log('no new update for ' + key);
+            }
+        }
+    }
+},null,true,'Asia/Singapore');
+
+//options.host, options.path, options.key
+function fetchImg(options){
+    return fetchHTML(options).then(data => {
+        var strUpdate = data;
+
+        if (strUpdate.length > 10){
+            var img = imgGetter(options.key, strUpdate);
+            return img;
+        }
+    }).catch((err)=>{
+        console.log('no new update');
+        return false;
+    })
+}
+
+function fetchImgNumber(options){
+    return fetchHTML(options).then(data => {
+        var strUpdate = data;
+
+        var num = numGetter(options.key, strUpdate);
+        return num;
+
+    }).catch((err)=>{
+        console.log('something gone wrong');
+        return false;
+    })
+}
+
+function fetchHTML(options){
     return new Promise(function(resolve,reject){
         var str = ''
 
-        http.request(options,function(response) {
+        http.request('http://' + options.host + options.path,function(response) {
 
             response.on('data', function (chunk) {
                 str += chunk;
@@ -51,150 +119,76 @@ function checkUpdate(options){
             });
 
             response.on('error', function(){
-                logger.log('error', 'Check Update error');
-                console.log("oops");
+                console.log("Request Error, most likely 404");
                 reject(str);
             });
         }).end();
     });
 };
 
-var CronJob = require('cron').CronJob;
+function imgGetter(hostname, html){
+    switch (hostname){
+        case 'nerfnow':
+            return html.split("<div id=\"comic\">")[1].split("src=\"")[1].split("\"")[0];
+            break;
+        case 'cnh':
+            return html.split("<img id=\"main-comic\" ")[1].split("src=\"//")[1].split("\"")[0];
+            break;
+        default:
+            return;
+    }
+};
 
-new CronJob('0 0 9 * * *', function() {
-    console.log("Cron Update Fired!");
+function numGetter(hostname, html){
+    switch (hostname){
+        case 'nerfnow':
+            return html.split("<div id=\"comic\">")[1].split(".com/img/")[1].split("/")[0];
+            break;
+        case 'cnh':
+            return html.split("<meta property=\"og:url\" content=\"http://explosm.net/comics/")[1].split("/")[0];
+            break;
+        default:
+            return;
+    }
+}
 
-    var strUpdate = '';
-
-    checkUpdate({host: 'www.nerfnow.com', path: '/comic/' + (latest+1).toString()}).then(function (data)
-    {
-        strUpdate = data;
-        console.log(strUpdate.length);
-
-        if (strUpdate.length > 10) {
-            latest += 1;
-            var img = strUpdate.split("<div id=\"comic\">")[1].split("src=\"")[1].split("\"")[0];
-
-            var sendlist = subscribers.find({}, function(err,docs){
-                if (err){
-                    logger.log('error', err)
-                    console.log(err);
-                }
-
-                console.log(docs.length);
-                for (var count = 0; count < docs.length; count++){
-                    bot.sendMessage(docs[count].chatid, "#"+ latest);
-                    bot.sendPhoto(docs[count].chatid, img);
-                }
-            });
-
-        } else
-        {
-            logger.log('info', 'No new update.');
-            console.log('no new update');
-        }
-    }).catch(function(err){
-        logger.log('err', err);
-        console.log(err);
-    });
-
-},null,true,'Asia/Singapore');
-
-function getPic(mID, number, auto){
-    options.path = '/comic/' + number;
-
-
-    var picurl = http.request(options,function(response) {
-        var str = '';
-        response.on('data', function (chunk) {
-            str += chunk;
-        });
-
-        response.on('end', function () {
-            try {
-                var img = str.split("<div id=\"comic\">")[1].split("src=\"")[1].split("\"")[0];
-                console.log(img);
-                bot.sendMessage(mID, "#"+ number)
-                bot.sendPhoto(mID, img);
-            } catch (e)
+function subscribe(cid, chattitle, comicname){
+    subscribers.findOneAndUpdate({key: comicname},{$addToSet: {subscribers: cid}},{upsert: true}, function(err,doc){
+        if (err) {
+            console.log(err);
+            return bot.sendMessage(cid, 'DB Error!');
+        } else {
+            if (chattitle === "")
             {
-                console.log(e);
-                console.log(latest);
-                if (!auto) {bot.sendMessage(mID, "Error with grabbing desired comic. Please check input.");}
+                return bot.sendMessage(cid, 'You have successfully subscribed to the webcomic ' + comicname + '!');
             }
-        });
-
-        response.on('error', function(){
-            logger.log("error", "getPic error.");
-            console.log("oops");
-        });
-
-    }).end();
-}
-
-function subscribe(cid, chattitle){
-    subscribers.findOne({chatid: cid}, function(err,doc){
-        if (err) {
-            console.log(err);
-            return bot.sendMessage(cid, 'DB Error!');
-        } else if (doc === null){
-            subscribers.insert({chatid: cid},
-                function (err,doc){
-                    if (err) {
-                        console.log(err)
-                        return bot.sendMessage(cid, "Subscribe Error!")}
-                    else {
-
-                        if (chattitle === "")
-                        {
-                            return bot.sendMessage(cid, 'You have successfully subscribed to Nerfnow Updates!!');
-                        }
-                        else{
-                            return bot.sendMessage(cid, chattitle + " has been subscribed to Nerfnow Updates!");
-                        }
-                    }
-                });
-        } else {
-            if (chattitle === "") {
-                return bot.sendMessage(cid, "You are already subscribed!");
-            } else {
-                return bot.sendMessage(cid, chattitle + " is already subscribed!")
+            else {
+                return bot.sendMessage(cid, chattitle + " has been subscribed to the webcomic " + comicname + '!');
             }
         }
     });
 }
 
-function unsubscribe(cid, chattitle){
-    subscribers.findOne({chatid: cid}, function(err,doc){
+function unsubscribe(cid, chattitle, comicname){
+    subscribers.findOneAndUpdate({key: comicname},{$pull: {subscribers: cid}}, {upsert: true}, function(err,doc){
         if (err) {
             console.log(err);
             return bot.sendMessage(cid, 'DB Error!');
-        } else if (doc !== null){
-            subscribers.remove({chatid: cid},
-                function (err,doc){
-                    if (err) {
-                        console.log(err)
-                        return bot.sendMessage(cid, "Unsubscribe Error!")}
-                    else {
-
-                        if (chattitle === "")
-                        {
-                            return bot.sendMessage(cid, 'You have successfully unsubscribed from Nerfnow Updates!!');
-                        }
-                        else{
-                            return bot.sendMessage(cid, chattitle + " has been unsubscribed from Nerfnow Updates!");
-                        }
-                    }
-                });
         } else {
-            if (chattitle === "") {
-                return bot.sendMessage(cid, "You weren't subscribed to begin with!");
-            } else {
-                return bot.sendMessage(cid, chattitle + " wasn't subscribed to begin with!")
+            if (chattitle === "")
+            {
+                return bot.sendMessage(cid, 'You have successfully unsubscribed from the webcomic ' + comicname +'!');
+            }
+            else{
+                return bot.sendMessage(cid, chattitle + " has been unsubscribed from the webcomic " + comicname + '!');
             }
         }
     });
 }
+
+/**
+ * BOT COMMANDS
+ */
 
 
 bot.on('/start', function(msg) {
@@ -216,11 +210,12 @@ bot.on('/subscribe', function(msg) {
     var id = msg.from.id;
     var chatId = msg.chat.id;
     var chatTitle = msg.chat.title || "";
-    if (!chatTitle) {
-        subscribe(id,"");
-    }
-    else {
-        subscribe(chatId,chatTitle);
+
+    var comicname = msg.text.split('/subscribe ')[1];
+    if (repos.hasOwnProperty(comicname)){
+        return subscribe(chatId, chatTitle, comicname)
+    } else {
+        return bot.sendMessage(chatId, 'Sorry, you have specified an invalid webcomic. Use /list to see a list of supported websites.');
     }
 });
 
@@ -228,11 +223,12 @@ bot.on('/unsubscribe', function(msg) {
     var id = msg.from.id;
     var chatId = msg.chat.id;
     var chatTitle = msg.chat.title || "";
-    if (!chatTitle) {
-        unsubscribe(id, "");
-    }
-    else {
-        unsubscribe(chatId, chatTitle);
+
+    var comicname = msg.text.split('/unsubscribe ')[1]
+    if (repos.hasOwnProperty(comicname)){
+        return unsubscribe(chatId, chatTitle, comicname)
+    } else {
+        return bot.sendMessage(chatId, 'Sorry, you have specified an invalid webcomic. Use /list to see a list of supported webcomics.');
     }
 });
 
@@ -258,52 +254,41 @@ bot.on('/help', function(msg){
         '\n/subscribe - Subscribe this chat to automated updates!' +
         '\n/unsubscribe - Unsubscribe this chat from automated updates.');
 });
-bot.on('/latest', function(msg){
 
-    var input = latest.toString();
-    var chatId = msg.chat.id;
-
-    getPic(chatId, input, false);
-})
+// bot.on('/latest', function(msg){
+//
+//     var input = latest.toString();
+//     var chatId = msg.chat.id;
+//
+//     getPic(chatId, input, false);
+// });
 
 bot.on('/update', function(msg){
-    options.path = '/';
 
+    console.log(msg);
 
-    var picurl = http.request(options,function(response) {
-        var str = '';
-        response.on('data', function (chunk) {
-            str += chunk;
-        });
+    for (var key in repos) {
+        if (repos.hasOwnProperty(key)) {
+            fetchImgNumber({host: repos[key].host, path: repos[key].latestpath, key: key})
+            .then((update) => {
+                if (update){
+                    comicnums.findOneAndUpdate({name: key}, {$set: {id: update}});
+                    repos[key].id = update;
+                    bot.sendMessage(msg.chat.id, 'Webcomic ' + key + ' has been updated to #' + update + '.');
+                } else {
+                    bot.sendMessage(msg.chat.id, 'Webcomic ' + key + ' has no new updates.');
+                }
+            });
+        }
+    }
+});
 
-        response.on('end', function () {
-            try {
-                var img = str.split("<div id=\"comic\">")[1].split(".com/img/")[1].split("/")[0];
-                console.log("Latest comic number:" + img);
-                latest = parseInt(img);
-                bot.sendMessage(mID, "Updated to latest comic: #" + img );
-            } catch (e)
-            {
-                console.log(e);
-                console.log(latest);
-                if (!auto) {bot.sendMessage(mID, "Error with update... maybe host is down?");}
-            }
-        });
-
-        response.on('error', function(){
-            logger.log("error", "Request error.");
-            console.log("oops");
-        });
-
-    }).end();
-})
-
-bot.on('/grab', function(msg){
-    var input = this.cmd[1] || (latest).toString();
-
-    var chatId = msg.chat.id;
-
-    getPic(chatId, input, false);
-})
+// bot.on('/grab', function(msg){
+//     var input = this.cmd[1] || (latest).toString();
+//
+//     var chatId = msg.chat.id;
+//
+//     getPic(chatId, input, false);
+// });
 
 bot.connect();

@@ -1,7 +1,7 @@
 {
-  "name": "nerfnow",
+  "name": "webcomic_bot",
   "version": "1.0.1",
-  "description": "Nerfnow bot to fetch comics",
+  "description": "Webcomic bot to fetch a variety of webcomics",
   "main": "app.js",
   "scripts": {
     "start": "node app.js"
@@ -9,10 +9,11 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "bluebird": "^3.0.6",
+    "bluebird": "latest",
+    "lodash": "^4.13.1",
     "cron": "^1.1.0",
-    "monk": "^1.0.1",
-    "telebot": "git://github.com/Pyriaxis/telebot/",
+    "monk": "latest",
+    "telebot": "1.0.6",
     "winston": "^2.1.1",
     "mongodb": "1.4.x"
   }
