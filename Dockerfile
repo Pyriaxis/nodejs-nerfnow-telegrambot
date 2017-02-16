@@ -1,4 +1,4 @@
-FROM node:5.0.0
+FROM mhart/alpine-node:6
 
 WORKDIR /usr/src/app
 
@@ -8,6 +8,6 @@ RUN npm install
 
 COPY . /usr/src/app
 
-EXPOSE 3001
+EXPOSE 3000
 
 CMD npm start

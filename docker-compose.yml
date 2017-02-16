@@ -1,13 +1,13 @@
-nerfnow_bot:
+webcomic_bot:
   build: .
   ports:
-    - "3001:3001"
+    - "3000:3000"
   links:
     - mongo
   environment:
     MONGODB_HOST: mongo
     MONGODB_PORT: 27017
-    MONGODB_DATABASE: nerfnow
+    MONGODB_DATABASE: webcomic
 
 mongo:
   image: mongo

@@ -1,16 +1,17 @@
 const TeleBot = require('telebot');
 const http = require('http');
+const https = require('https');
 const Promise = require('bluebird');
 
 var monk = require('monk');
 
-//const db = monk(process.env.MONGODB_HOST + ':' + process.env.MONGODB_PORT + '/' + process.env.MONGODB_DATABASE)
-const db = monk('localhost:27017/webcomicDB');
+const db = monk(process.env.MONGODB_HOST + ':' + process.env.MONGODB_PORT + '/' + process.env.MONGODB_DATABASE)
+//const db = monk('localhost:27017/webcomicDB');
 const subscribers = db.get("subscribers");
 const comicnums = db.get("comicnums");
 
 const bot = new TeleBot({
-    token: '165690867:AAF-6Gvt2yWe0MCm3SEJVl7pW_4iOL5_Msc',
+    token: '@tobefilledup',
     pooling: { // Optional. Use pooling.
         interval: 1000, // Optional. How often check updates (in ms).
         timeout: 0, // Optional. Update pulling timeout (0 - short polling).
@@ -19,18 +20,33 @@ const bot = new TeleBot({
     }
 });
 
-var repos = {
+const repos = {
     nerfnow:{
         host: 'www.nerfnow.com',
         subpath: '/comic/',
         latestpath: '',
-        id: ''
+        id: '',
+        numbered: true,
+        https: false,
+        fullname: 'NerfNow!'
     },
     cnh:{
         host: 'explosm.net',
         subpath: '/comics/',
         latestpath: '/comics/latest',
-        id: ''
+        id: '',
+        numbered: true,
+        https: false,
+        fullname: 'Cyanide and Happiness'
+    },
+    pennyarcade:{
+        host: 'www.penny-arcade.com',
+        subpath: '/comic/',
+        latestpath: '/comic',
+        id: '',
+        numbered: false,
+        https: true,
+        fullname: 'Penny Arcade (Unnumbered)'
     }
 };
 
@@ -46,7 +62,7 @@ function initDBNumbers(key){
             if (doc){
                 repos[key].id = doc.id;
             } else {
-                comicnums.insert({name: key, id: 1});
+                comicnums.insert({name: key, id: '1'});
             }
         })
     }
@@ -56,76 +72,81 @@ var CronJob = require('cron').CronJob;
 
 new CronJob('0 0 9 * * *', function() {
     console.log("Cron Update Fired!");
-
+    var count = 0;
     for (var key in repos) {
-        if (repos.hasOwnProperty(key)) {
-            var update = fetchImg({host: repos[key].host, path: repos[key].subpath + (repos[key].id +1).toString(), key: key})
-            if (update)
-            {
-                comicnums.findOneAndUpdate({name: key}, {$set: {id: repos[key].id + 1}});
-                repos[key].id++;
-                subscribers.find({key: key}, (err,docs)=> {
-                    for (var i = 0; i < docs.subscribers.length; i++){
-                        bot.sendMessage(docs.subscribers[i], '#' + repos[key].id);
-                        bot.sendPhoto(docs.subscribers[i], update);
-                    }
-                })
-            } else {
-                console.log('no new update for ' + key);
+        count++;
+        setTimeout(function(){
+            if (repos.hasOwnProperty(key)) {
+                comicnums.findOne({name: key}).then((doc)=>{
+                    fetchHTML({host: repos[key].host, path: repos[key].latestpath, key: key, https: repos[key].https})
+                    .then(function(html){
+                        var comicId = numGetter(key, html);
+
+                        if (comicId !== doc.key){
+                            //update
+                            var comic = imgGetter(key, html);
+                            comicnums.findOneAndUpdate({name: key}, {$set: {id: comicId}});
+                            repos[key].id = comicId;
+                            subscribers.find({key: key}, (err,docs) => {
+                                for (var i = 0; i < docs.subscribers.length; i++){
+                                    bot.sendMessage(docs.subscribers[i], '#' + repos[key].id);
+                                    bot.sendPhoto(docs.subscribers[i], comic);
+                                }
+                            })
+                        } else {
+                            //nope
+                            console.log('no new update for ' + key);
+                        }
+                    });
+                });
             }
-        }
+        }, 2000 * count);
     }
 },null,true,'Asia/Singapore');
 
-//options.host, options.path, options.key
-function fetchImg(options){
-    return fetchHTML(options).then(data => {
-        var strUpdate = data;
 
-        if (strUpdate.length > 10){
-            var img = imgGetter(options.key, strUpdate);
-            return img;
-        }
-    }).catch((err)=>{
-        console.log('no new update');
-        return false;
-    })
-}
-
-function fetchImgNumber(options){
-    return fetchHTML(options).then(data => {
-        var strUpdate = data;
-
-        var num = numGetter(options.key, strUpdate);
-        return num;
-
-    }).catch((err)=>{
-        console.log('something gone wrong');
-        return false;
-    })
-}
-
+//options.host, options.path, options.key, options.https,
 function fetchHTML(options){
+    var str = '';
+
+    console.log(options);
+
     return new Promise(function(resolve,reject){
-        var str = ''
+        if (options.https){
+            https.request('https://' + options.host + options.path,function(response) {
 
-        http.request('http://' + options.host + options.path,function(response) {
+                response.on('data', function (chunk) {
+                    str += chunk;
+                });
+                response.on('end', function () {
+                    resolve(str);
+                });
 
-            response.on('data', function (chunk) {
-                str += chunk;
-            });
-            response.on('end', function () {
-                resolve(str);
-            });
+                response.on('error', function(){
+                    console.log("Request Error, most likely 404");
+                    reject('fetch html error');
+                });
+            }).end();
+        } else {
+            http.request('http://' + options.host + options.path,function(response) {
 
-            response.on('error', function(){
-                console.log("Request Error, most likely 404");
-                reject(str);
-            });
-        }).end();
+                response.on('data', function (chunk) {
+                    str += chunk;
+                });
+                response.on('end', function () {
+                    resolve(str);
+                });
+
+                response.on('error', function(){
+                    console.log("Request Error, most likely 404");
+                    reject('fetch html error');
+                });
+            }).end();
+        }
     });
 };
 
+//Fetches the actual comic img URL from the HTML.
 function imgGetter(hostname, html){
     switch (hostname){
         case 'nerfnow':
@@ -134,12 +155,17 @@ function imgGetter(hostname, html){
         case 'cnh':
             return html.split("<img id=\"main-comic\" ")[1].split("src=\"//")[1].split("\"")[0];
             break;
+        case 'pennyarcade':
+            return html.split('"comicFrame"><img src="')[1].split('"')[0];
+            break;
         default:
-            return;
+            throw new Error('Unable to get Image URL');
     }
 };
 
+//Fetches some comic ID from the HTML
 function numGetter(hostname, html){
+
     switch (hostname){
         case 'nerfnow':
             return html.split("<div id=\"comic\">")[1].split(".com/img/")[1].split("/")[0];
@@ -147,8 +173,10 @@ function numGetter(hostname, html){
         case 'cnh':
             return html.split("<meta property=\"og:url\" content=\"http://explosm.net/comics/")[1].split("/")[0];
             break;
+        case 'pennyarcade':
+            return html.split('"comicFrame"><img src="')[1].split('" alt="')[1].split('"')[0];
         default:
-            return;
+            throw new Error('Unable to get Comic ID');
     }
 }
 
@@ -186,24 +214,24 @@ function unsubscribe(cid, chattitle, comicname){
     });
 }
 
-/**
- * BOT COMMANDS
- */
+/************************************
+ *         BOT COMMANDS
+ ************************************/
 
 
 bot.on('/start', function(msg) {
 
-    var id = msg.from.id;
-    var mId = msg.message_id;
     var chatId = msg.chat.id;
-    var chatTitle = msg.chat.title || "";
-    var firstName = msg.from.first_name;
-    var lastName = msg.from.last_name || "";
-    if (!chatTitle){
-        return bot.sendMessage(id, 'Welcome, ' + firstName + ' ' + lastName+ '!', { reply: mId });}
-    else {
-        return bot.sendMessage(chatId, 'Welcome, ' + firstName + ' ' + lastName + '! This is a debug message.', {reply: mId});
-    }
+
+    return bot.sendMessage(chatId, 'Hi there! I\'m the WebComic bot! ' +
+        'I serve you various Webcomic updates, or you can request them directly through me!' +
+        '\n\nYou can interact with me by sending me these commands:' +
+        '\n\n/help - Display this message.' +
+        '\n/list - Display a list of supported webcomics.' +
+        '\n/latest !comic - Grab the latest in the specified comic.' +
+        '\n/grab !comic #number - Grab the specified comic number from a numbered series.' +
+        '\n/subscribe !comic - Subscribe this chat to automated updates!' +
+        '\n/unsubscribe !comic - Unsubscribe this chat from automated updates.');
 });
 
 bot.on('/subscribe', function(msg) {
@@ -224,7 +252,7 @@ bot.on('/unsubscribe', function(msg) {
     var chatId = msg.chat.id;
     var chatTitle = msg.chat.title || "";
 
-    var comicname = msg.text.split('/unsubscribe ')[1]
+    var comicname = msg.text.split('/unsubscribe ')[1];
     if (repos.hasOwnProperty(comicname)){
         return unsubscribe(chatId, chatTitle, comicname)
     } else {
@@ -236,7 +264,6 @@ bot.on('/debug', function(msg){
 
     console.log(msg);
     chatId = msg.chat.id;
-    logger.log('info', msg);
     return bot.sendMessage(chatId, "Debug: ID of chat = " + chatId.toString());
 
 })
@@ -245,50 +272,88 @@ bot.on('/help', function(msg){
 
     var chatId = msg.chat.id;
 
-    return bot.sendMessage(chatId, 'Hi there! I\'m the NerfNow bot! ' +
-        'I serve you NerfNow comic updates, or you can request them directly through me!' +
+    return bot.sendMessage(chatId, 'Hi there! I\'m the WebComic bot! ' +
+        'I serve you various Webcomic updates, or you can request them directly through me!' +
         '\n\nYou can interact with me by sending me these commands:' +
-        '\n\n/help - Display this message' +
-        '\n/latest - Grab the latest comic' +
-        '\n/grab #number - Grab the specified comic, or the latest if blank' +
-        '\n/subscribe - Subscribe this chat to automated updates!' +
-        '\n/unsubscribe - Unsubscribe this chat from automated updates.');
+        '\n\n/help - Display this message.' +
+        '\n/list - Display a list of supported webcomics.' +
+        '\n/latest !comic - Grab the latest in the specified comic.' +
+        '\n/grab !comic #number - Grab the specified comic number from a numbered series.' +
+        '\n/subscribe !comic - Subscribe this chat to automated updates!' +
+        '\n/unsubscribe !comic - Unsubscribe this chat from automated updates.');
 });
 
-// bot.on('/latest', function(msg){
-//
-//     var input = latest.toString();
-//     var chatId = msg.chat.id;
-//
-//     getPic(chatId, input, false);
-// });
+bot.on('/list', function(msg){
+    var retstr = "Here's a list of currently supported comics:\n\n";
+    console.log(repos);
+    for (var key in repos){
+        if (repos.hasOwnProperty(key)){
+            retstr += key + ' - ' + repos[key].fullname + '\n';
+        };
+    }
+    return bot.sendMessage(msg.chat.id, retstr);
+});
 
-bot.on('/update', function(msg){
+bot.on('/grab', function(msg){
+    try {
+        var textArr = msg.text.split(' ');
+        var key = textArr[1];
 
-    console.log(msg);
-
-    for (var key in repos) {
-        if (repos.hasOwnProperty(key)) {
-            fetchImgNumber({host: repos[key].host, path: repos[key].latestpath, key: key})
-            .then((update) => {
-                if (update){
-                    comicnums.findOneAndUpdate({name: key}, {$set: {id: update}});
-                    repos[key].id = update;
-                    bot.sendMessage(msg.chat.id, 'Webcomic ' + key + ' has been updated to #' + update + '.');
-                } else {
-                    bot.sendMessage(msg.chat.id, 'Webcomic ' + key + ' has no new updates.');
-                }
-            });
+        if (!repos.hasOwnProperty(key) || !repos[key].numbered){
+            return bot.sendMessage(msg.chat.id, 'Sorry, the comic ' + key + ' is either not supported or unnumbered. Please use /list to get a list of supported comics.');
         }
+
+        var number = textArr[2];
+
+        fetchHTML({host: repos[key].host, path: repos[key].subpath + number, key: key, https: repos[key].https})
+        .then(function(html){
+            var comicId = numGetter(key, html);
+            var comicImg = imgGetter(key, html);
+            bot.sendMessage(msg.chat.id, '#' + comicId);
+            bot.sendPhoto(msg.chat.id, comicImg);
+
+        });
+    } catch (err){
+        console.log(err);
+        return bot.sendMessage(msg.chat.id, 'Eto.. an error occurred processing your command.. Maybe the comic has not been released yet?');
     }
 });
 
-// bot.on('/grab', function(msg){
-//     var input = this.cmd[1] || (latest).toString();
-//
-//     var chatId = msg.chat.id;
-//
-//     getPic(chatId, input, false);
-// });
+bot.on('/latest', function(msg){
+    try {
+        var textArr = msg.text.split(' ');
+        var key = textArr[1];
+
+        if (!repos.hasOwnProperty(key)){
+            return bot.sendMessage(msg.chat.id, 'Sorry, the comic ' + key + ' is not supported. Please use /list to get a list of supported comics.');
+        }
+
+        fetchHTML({host: repos[key].host, path: repos[key].latestpath, key: key, https: repos[key].https})
+        .then(function(html){
+            var comicId = numGetter(key, html);
+            var comicImg = imgGetter(key, html);
+            bot.sendMessage(msg.chat.id, '#' + comicId);
+            bot.sendPhoto(msg.chat.id, comicImg);
+        });
+
+    } catch (err){
+        return bot.sendMessage(msg.chat.id, 'Eto.. an error occurred processing your command.. Mayhap check your syntax?');
+    }
+});
+
+bot.on('/update', function(msg){
+    Object.keys(repos).forEach(function(key,index){
+        console.log(key);
+
+        comicnums.findOne({name: key}).then((doc)=>{
+            fetchHTML({host: repos[key].host, path: repos[key].latestpath, key: key, https: repos[key].https})
+                .then(function(html){
+                    var comicId = numGetter(key, html);
+                    comicnums.findOneAndUpdate({name: key}, {$set: {id: comicId}});
+                    bot.sendMessage(msg.chat.id, 'Webcomic ' + key + ' has been updated to #' + comicId + '.');
+                });
+        });
+    });
+});
 
 bot.connect();
