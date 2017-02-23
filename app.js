@@ -47,6 +47,15 @@ const repos = {
         numbered: false,
         https: true,
         fullname: 'Penny Arcade (Unnumbered)'
+    },
+    bizarro:{
+        host: 'bizarro.com',
+        subpath: '',
+        latestpath: '',
+        id: '',
+        numbered: false,
+        https: false,
+        fullname: 'Bizarro (Unnumbered)'
     }
 };
 
@@ -167,6 +176,8 @@ function imgGetter(hostname, html){
         case 'pennyarcade':
             return html.split('"comicFrame"><img src="')[1].split('"')[0];
             break;
+        case 'bizarro':
+            return html.split("<!--  the comic panel -->")[1].split('<img src="')[1].split('"')[0];
         default:
             throw new Error('Unable to get Image URL');
     }
@@ -183,6 +194,8 @@ function numGetter(hostname, html){
             break;
         case 'pennyarcade':
             return html.split('"comicFrame"><img src="')[1].split('" alt="')[1].split('"')[0];
+        case 'bizarro':
+            return html.split('"comic-date">')[1].split('</div>')[0].trim();
         default:
             throw new Error('Unable to get Comic ID');
     }
