@@ -11,7 +11,7 @@ const subscribers = db.get("subscribers");
 const comicnums = db.get("comicnums");
 
 const bot = new TeleBot({
-    token: '@tobefilledup',
+    token: '@to be filled',
     pooling: { // Optional. Use pooling.
         interval: 1000, // Optional. How often check updates (in ms).
         timeout: 0, // Optional. Update pulling timeout (0 - short polling).
@@ -72,38 +72,47 @@ var CronJob = require('cron').CronJob;
 
 new CronJob('0 0 9 * * *', function() {
     console.log("Cron Update Fired!");
-    var count = 0;
-    for (var key in repos) {
-        count++;
-        setTimeout(function(){
-            if (repos.hasOwnProperty(key)) {
-                comicnums.findOne({name: key}).then((doc)=>{
-                    fetchHTML({host: repos[key].host, path: repos[key].latestpath, key: key, https: repos[key].https})
-                    .then(function(html){
-                        var comicId = numGetter(key, html);
-
-                        if (comicId !== doc.key){
-                            //update
-                            var comic = imgGetter(key, html);
-                            comicnums.findOneAndUpdate({name: key}, {$set: {id: comicId}});
-                            repos[key].id = comicId;
-                            subscribers.find({key: key}, (err,docs) => {
-                                for (var i = 0; i < docs.subscribers.length; i++){
-                                    bot.sendMessage(docs.subscribers[i], '#' + repos[key].id);
-                                    bot.sendPhoto(docs.subscribers[i], comic);
-                                }
-                            })
-                        } else {
-                            //nope
-                            console.log('no new update for ' + key);
-                        }
-                    });
-                });
-            }
-        }, 2000 * count);
-    }
+    updateAndSend();
 },null,true,'Asia/Singapore');
 
+function updateAndSend(){
+    var count = 0;
+    for (var key in repos) {
+        let comic = key;
+        count++;
+        setTimeout(function(){
+            if (repos.hasOwnProperty(comic)) {
+                comicnums.findOne({name: comic}).then((doc)=>{
+                    var scopeComic = comic;
+                    fetchHTML({host: repos[scopeComic].host, path: repos[scopeComic].latestpath, key: scopeComic, https: repos[scopeComic].https})
+                        .then(function(html){
+                            var comicId = numGetter(scopeComic, html);
+
+                            if (comicId !== doc.id){
+                                //update
+                                var comicUrl = imgGetter(scopeComic, html);
+                                comicnums.findOneAndUpdate({name: scopeComic}, {$set: {id: comicId}});
+                                repos[scopeComic].id = comicId;
+
+                                console.log(scopeComic);
+
+                                subscribers.findOne({key: scopeComic}).then((docs) => {
+
+                                    for (var i = 0; i < docs.subscribers.length; i++){
+                                        bot.sendMessage(docs.subscribers[i], '#' + repos[scopeComic].id);
+                                        bot.sendPhoto(docs.subscribers[i], comicUrl);
+                                    }
+                                });
+                            } else {
+                                //nope
+                                console.log('no new update for ' + comic);
+                            }
+                        });
+                });
+            }
+        }, 4000 * count);
+    }
+}
 
 //options.host, options.path, options.key, options.https,
 function fetchHTML(options){
@@ -165,7 +174,6 @@ function imgGetter(hostname, html){
 
 //Fetches some comic ID from the HTML
 function numGetter(hostname, html){
-
     switch (hostname){
         case 'nerfnow':
             return html.split("<div id=\"comic\">")[1].split(".com/img/")[1].split("/")[0];
@@ -228,14 +236,13 @@ bot.on('/start', function(msg) {
         '\n\nYou can interact with me by sending me these commands:' +
         '\n\n/help - Display this message.' +
         '\n/list - Display a list of supported webcomics.' +
-        '\n/latest !comic - Grab the latest in the specified comic.' +
-        '\n/grab !comic #number - Grab the specified comic number from a numbered series.' +
-        '\n/subscribe !comic - Subscribe this chat to automated updates!' +
-        '\n/unsubscribe !comic - Unsubscribe this chat from automated updates.');
+        '\n/latest comic - Grab the latest in the specified comic.' +
+        '\n/grab comic #number - Grab the specified comic number from a numbered series.' +
+        '\n/subscribe comic - Subscribe this chat to automated updates!' +
+        '\n/unsubscribe comic - Unsubscribe this chat from automated updates.');
 });
 
 bot.on('/subscribe', function(msg) {
-    var id = msg.from.id;
     var chatId = msg.chat.id;
     var chatTitle = msg.chat.title || "";
 
@@ -248,7 +255,6 @@ bot.on('/subscribe', function(msg) {
 });
 
 bot.on('/unsubscribe', function(msg) {
-    var id = msg.from.id;
     var chatId = msg.chat.id;
     var chatTitle = msg.chat.title || "";
 
@@ -340,6 +346,10 @@ bot.on('/latest', function(msg){
         return bot.sendMessage(msg.chat.id, 'Eto.. an error occurred processing your command.. Mayhap check your syntax?');
     }
 });
+
+bot.on('/fireCron', function(msg){
+    updateAndSend();
+})
 
 bot.on('/update', function(msg){
     Object.keys(repos).forEach(function(key,index){
