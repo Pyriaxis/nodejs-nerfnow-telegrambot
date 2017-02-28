@@ -56,6 +56,15 @@ const repos = {
         numbered: false,
         https: false,
         fullname: 'Bizarro (Unnumbered)'
+    },
+    dilbert:{
+        host: 'dilbert.com',
+        subpath: '',
+        latestpath: '',
+        id: '',
+        numbered: false,
+        https: false,
+        fullname: 'Dilbert (Unnumbered)'
     }
 };
 
@@ -178,6 +187,10 @@ function imgGetter(hostname, html){
             break;
         case 'bizarro':
             return html.split("<!--  the comic panel -->")[1].split('<img src="')[1].split('"')[0];
+            break;
+        case 'dilbert':
+            return html.split('img-comic-container">')[1].split('src="')[1].split('"')[0];
+            break;
         default:
             throw new Error('Unable to get Image URL');
     }
@@ -194,8 +207,13 @@ function numGetter(hostname, html){
             break;
         case 'pennyarcade':
             return html.split('"comicFrame"><img src="')[1].split('" alt="')[1].split('"')[0];
+            break;
         case 'bizarro':
             return html.split('"comic-date">')[1].split('</div>')[0].trim();
+            break;
+        case 'dilbert':
+            return html.split('img-comic-container">')[1].split('data-id="')[1].split('"')[0];
+            break;
         default:
             throw new Error('Unable to get Comic ID');
     }
