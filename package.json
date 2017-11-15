@@ -1,7 +1,7 @@
 {
   "name": "webcomic_bot",
-  "version": "1.0.1",
-  "description": "Webcomic bot to fetch a variety of webcomics",
+  "version": "1.0.2",
+  "description": "Webcomic bot to fetch a variety of webcomics - tawawa edition.",
   "main": "app.js",
   "scripts": {
     "start": "node app.js"
@@ -10,11 +10,10 @@
   "license": "ISC",
   "dependencies": {
     "bluebird": "latest",
-    "lodash": "^4.13.1",
     "cron": "^1.1.0",
-    "monk": "latest",
+    "lodash": "^4.13.1",
+    "request": "^2.83.0",
     "telebot": "1.0.6",
-    "winston": "^2.1.1",
-    "mongodb": "1.4.x"
+    "twitter": "^1.7.1"
   }
 }
